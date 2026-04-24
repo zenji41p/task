@@ -1,0 +1,737 @@
+---
+title: "Bayesian One-Breakpoint Piecewise Linear Model with Different Variances"
+author: "Jimmy Zeng"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    theme: readable
+params:
+  data_path: "aluminium.csv"
+---
+
+Please  access the files via the following link: https://github.com/zenji41p/task
+
+
+#Task 1
+
+The smallest possible value is
+
+\[
+\boxed{3}.
+\]
+
+Let \(A\subset X\) be the abelian variety of dimension \(10\). A standard inequality for a subvariety \(Y\subset X\) of a compact complex manifold is
+
+\[
+a(Y)\le a(X)+\operatorname{codim}_X(Y).
+\]
+
+Applying this to \(Y=A\), we have
+
+\[
+a(A)=\dim A=10,
+\]
+
+because \(A\) is an abelian variety. Also,
+
+\[
+\operatorname{codim}_X(A)=17-10=7.
+\]
+
+Therefore,
+
+\[
+10=a(A)\le a(X)+7,
+\]
+
+so
+
+\[
+a(X)\ge 3.
+\]
+
+Thus the algebraic dimension cannot be smaller than \(3\).
+
+To see that \(3\) is actually attainable, one uses the existence of complex tori of algebraic dimension \(0\). The cited paper constructs explicit simple complex tori of algebraic dimension \(0\) in every complex dimension \(g\ge 2\). In particular, take a \(7\)-dimensional torus \(T_7\) with
+
+\[
+a(T_7)=0.
+\]
+
+Using such a torus, one can construct a \(14\)-dimensional complex torus \(K\) with
+
+\[
+a(K)=0
+\]
+
+which contains a \(7\)-dimensional abelian variety \(A_7\). Then take
+
+\[
+X=K\times B_3,
+\]
+
+where \(B_3\) is a \(3\)-dimensional abelian variety. Then
+
+\[
+\dim X=14+3=17,
+\]
+
+and
+
+\[
+A_7\times B_3\subset X
+\]
+
+is an abelian variety of dimension
+
+\[
+7+3=10.
+\]
+
+Moreover,
+
+\[
+a(X)=a(K)+a(B_3)=0+3=3.
+\]
+
+So the lower bound is sharp, and the smallest possible algebraic dimension is
+
+\[
+\boxed{3}.
+\]
+
+The tempting answer \(10\) is too large because meromorphic functions on the abelian subvariety do not necessarily extend to the whole torus.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 5
+)
+set.seed(2026)
+```
+
+# Aim
+
+The aim of this analysis is to estimate the yield point of an aluminium sample using a Bayesian one-breakpoint piecewise linear regression model.
+
+
+#Initial Load and inspect the data
+
+
+# Load and inspect the data
+```{r load-data}
+# Use aluminium.csv if available; otherwise use the uploaded file name.
+
+aluminium <-read.csv("~/Desktop/job application documents/task/aluminium.csv")
+
+str(aluminium)
+head(aluminium)
+summary(aluminium)
+```
+```{r prepare-data}
+# Keep only the required variables and remove missing values.
+aluminium <- aluminium[, c("strain", "stress")]
+aluminium <- na.omit(aluminium)
+
+# Sort by strain. This is useful for plotting and for the breakpoint grid.
+aluminium <- aluminium[order(aluminium$strain), ]
+
+x <- aluminium$strain
+y <- aluminium$stress
+n <- length(y)
+
+n
+```
+
+
+# Initial visualisation
+
+```{r initial-plot}
+plot(
+  x, y,
+  pch = 16,
+  col = "grey40",
+  xlab = "Strain",
+  ylab = "Stress",
+  main = "Observed aluminium stress-strain data"
+)
+abline(v = 0.004, col = "red", lwd = 2, lty = 2)
+legend(
+  "topleft",
+  legend = "Approximate observed changepoint: strain = 0.004",
+  col = "red",
+  lty = 2,
+  lwd = 2,
+  bty = "n"
+)
+```
+
+Initial obsevation was that the change point is roughly at 0.004, with less varibility before the change point and a greater variabilty after the change point. Those are really important to be accounted by the model. 
+
+
+# Model specification
+
+Let \(x_i\) denote strain and \(y_i\) denote stress. The mean function is continuous at the breakpoint \(\tau\):
+
+\[
+\mu_i =
+\begin{cases}
+\beta_1 x_i, & x_i \le \tau,\\
+\beta_1 \tau + \beta_2(x_i - \tau), & x_i > \tau.
+\end{cases}
+\]
+
+To reflect the larger variability after the yield point, I use different residual variances:
+
+\[
+y_i \mid \beta_1,\beta_2,\tau,\sigma_1^2,\sigma_2^2 \sim
+\begin{cases}
+N(\mu_i, \sigma_1^2), & x_i \le \tau,\\
+N(\mu_i, \sigma_2^2), & x_i > \tau.
+\end{cases}
+\]
+
+Here:
+
+- \(\sigma_1^2\) is the residual variance before the changepoint;
+- \(\sigma_2^2\) is the residual variance after the changepoint.
+
+The priors are:
+
+\[
+\beta_j \sim N(30000, 20000^2), \qquad j = 1,2,
+\]
+
+\[
+\sigma_1^2 \sim \mathrm{Inverse\text{-}Gamma}(4, 13.12),
+\qquad
+\sigma_2^2 \sim \mathrm{Inverse\text{-}Gamma}(4, 13.12),
+\]
+
+and an informative truncated Normal prior is placed on \(\tau\):
+
+\[
+\tau \sim N(0.0045, 0.003^2) \quad \text{truncated to } [\min(x), \max(x)].
+\]
+
+This prior reflects the prior observation that the yield point is expected to occur near strain level 0.004--0.005 while still allowing the data to update this belief.
+T
+he plot suggests a change in slope at approximately strain = 0.004. It also suggests that the variability in stress is larger after the changepoint than before it. This motivates the heteroscedastic model used below.
+
+# Bayesian implementation
+
+Because the model now has two variances, I use a simple Metropolis-within-Gibbs sampler:
+
+1. Update \(\beta_1\) and \(\beta_2\) using a random-walk Metropolis step.
+2. Update \(\sigma_1^2\) and \(\sigma_2^2\) from their inverse-gamma full conditional distributions.
+3. Update \(\tau\) by evaluating the conditional posterior probability over all candidate breakpoints. The breakpoint probabilities combine the likelihood with a discretised truncated Normal prior centred at 0.0045 with standard deviation 0.003.
+
+This approach is easy to explain and works well for this small dataset.
+
+## Helper functions
+
+```{r helper-functions}
+# Inverse-gamma sampler using shape-rate parameterisation.
+# If z ~ Gamma(shape, rate), then 1 / z ~ Inverse-Gamma(shape, rate).
+rinvgamma <- function(n, shape, rate) {
+  1 / rgamma(n, shape = shape, rate = rate)
+}
+
+# Continuous piecewise linear design matrix for a given tau.
+make_design <- function(x, tau) {
+  cbind(
+    pmin(x, tau),
+    pmax(0, x - tau)
+  )
+}
+
+# Log prior density for beta.
+log_prior_beta <- function(beta, mu0, sd0) {
+  sum(dnorm(beta, mean = mu0, sd = sd0, log = TRUE))
+}
+
+# Log prior density for tau.
+# The Normal prior is truncated to the observed strain range.
+# For Metropolis comparisons and discrete-grid sampling, the truncation constant
+# is the same for all candidate tau values and therefore cancels out.
+log_prior_tau <- function(tau, tau_prior_mean, tau_prior_sd, tau_min, tau_max) {
+  if (tau < tau_min || tau > tau_max) return(-Inf)
+  dnorm(tau, mean = tau_prior_mean, sd = tau_prior_sd, log = TRUE)
+}
+
+# Log likelihood under two variances.
+log_likelihood <- function(y, x, beta, tau, sigma1_sq, sigma2_sq) {
+  X <- make_design(x, tau)
+  mu <- as.vector(X %*% beta)
+  before <- x <= tau
+  sum(dnorm(y[before], mean = mu[before], sd = sqrt(sigma1_sq), log = TRUE)) +
+    sum(dnorm(y[!before], mean = mu[!before], sd = sqrt(sigma2_sq), log = TRUE))
+}
+
+# Log posterior up to a constant.
+log_posterior <- function(y, x, beta, tau, sigma1_sq, sigma2_sq,
+                          mu0, sd0, a0, b0,
+                          tau_prior_mean, tau_prior_sd, tau_min, tau_max) {
+  if (sigma1_sq <= 0 || sigma2_sq <= 0) return(-Inf)
+  log_likelihood(y, x, beta, tau, sigma1_sq, sigma2_sq) +
+    log_prior_beta(beta, mu0, sd0) +
+    log_prior_tau(tau, tau_prior_mean, tau_prior_sd, tau_min, tau_max) +
+    # inverse-gamma priors, ignoring constants not needed for Metropolis
+    (-(a0 + 1) * log(sigma1_sq) - b0 / sigma1_sq) +
+    (-(a0 + 1) * log(sigma2_sq) - b0 / sigma2_sq)
+}
+```
+
+## Prior settings and candidate breakpoints
+
+```{r prior-and-grid}
+# Prior settings from the task.
+mu0 <- c(30000, 30000)
+sd0 <- c(20000, 20000)
+a0 <- 4
+b0 <- 13.12
+
+# Informative truncated Normal prior for the changepoint.
+tau_prior_mean <- 0.0045
+tau_prior_sd <- 0.003
+
+# Candidate tau values.
+# Avoid very extreme values so that both sides of the changepoint contain enough observations.
+min_points_each_side <- 5
+tau_candidates <- sort(unique(x))[min_points_each_side:(length(unique(x)) - min_points_each_side)]
+
+# Optional: include a focused grid around the observed likely region.
+# Here the full non-extreme grid is still used because the dataset is small.
+length(tau_candidates)
+range(tau_candidates)
+
+# Visualise the prior over the candidate breakpoint grid.
+tau_prior_weights <- dnorm(tau_candidates, mean = tau_prior_mean, sd = tau_prior_sd)
+tau_prior_weights <- tau_prior_weights / sum(tau_prior_weights)
+
+plot(
+  tau_candidates, tau_prior_weights,
+  type = "l",
+  lwd = 2,
+  xlab = "Candidate tau",
+  ylab = "Prior probability on grid",
+  main = "Discretised truncated Normal prior for tau"
+)
+abline(v = tau_prior_mean, col = "red", lty = 2, lwd = 2)
+```
+
+## Initial values
+
+```{r initial-values}
+# Start tau near the visually observed changepoint.
+tau_init <- tau_candidates[which.min(abs(tau_candidates - 0.004))]
+
+X_init <- make_design(x, tau_init)
+lm_init <- lm(y ~ X_init - 1)
+beta_init <- as.numeric(coef(lm_init))
+
+resid_init <- y - as.vector(X_init %*% beta_init)
+before_init <- x <= tau_init
+
+sigma1_init <- var(resid_init[before_init])
+sigma2_init <- var(resid_init[!before_init])
+
+beta_init
+sigma1_init
+sigma2_init
+tau_init
+```
+
+## MCMC sampler
+
+```{r mcmc-sampler}
+run_sampler <- function(y, x, tau_candidates,
+                        n_iter = 30000,
+                        burn_in = 10000,
+                        thin = 5,
+                        beta_init,
+                        tau_init,
+                        sigma1_init,
+                        sigma2_init,
+                        mu0,
+                        sd0,
+                        a0,
+                        b0,
+                        tau_prior_mean,
+                        tau_prior_sd,
+                        tau_min,
+                        tau_max,
+                        proposal_sd = c(500, 500)) {
+  
+  beta <- beta_init
+  tau <- tau_init
+  sigma1_sq <- sigma1_init
+  sigma2_sq <- sigma2_init
+  
+  keep_index <- seq(from = burn_in + 1, to = n_iter, by = thin)
+  n_keep <- length(keep_index)
+  samples <- matrix(NA_real_, nrow = n_keep, ncol = 5)
+  colnames(samples) <- c("beta1", "beta2", "tau", "sigma1_sq", "sigma2_sq")
+  
+  accept_beta <- 0
+  keep_counter <- 1
+  
+  current_lp <- log_posterior(
+    y, x, beta, tau, sigma1_sq, sigma2_sq,
+    mu0, sd0, a0, b0,
+    tau_prior_mean, tau_prior_sd, tau_min, tau_max
+  )
+  
+  for (iter in seq_len(n_iter)) {
+    
+    # 1. Random-walk Metropolis update for beta.
+    beta_prop <- beta + rnorm(2, mean = 0, sd = proposal_sd)
+    prop_lp <- log_posterior(
+      y, x, beta_prop, tau, sigma1_sq, sigma2_sq,
+      mu0, sd0, a0, b0,
+      tau_prior_mean, tau_prior_sd, tau_min, tau_max
+    )
+    
+    if (log(runif(1)) < prop_lp - current_lp) {
+      beta <- beta_prop
+      current_lp <- prop_lp
+      accept_beta <- accept_beta + 1
+    }
+    
+    # 2. Gibbs update for sigma1_sq and sigma2_sq.
+    X <- make_design(x, tau)
+    mu <- as.vector(X %*% beta)
+    before <- x <= tau
+    
+    sse1 <- sum((y[before] - mu[before])^2)
+    sse2 <- sum((y[!before] - mu[!before])^2)
+    n1 <- sum(before)
+    n2 <- sum(!before)
+    
+    sigma1_sq <- rinvgamma(1, shape = a0 + n1 / 2, rate = b0 + sse1 / 2)
+    sigma2_sq <- rinvgamma(1, shape = a0 + n2 / 2, rate = b0 + sse2 / 2)
+    
+    # 3. Discrete update for tau conditional on beta and variances.
+    log_probs_tau <- vapply(
+      tau_candidates,
+      function(tau_value) {
+        log_likelihood(y, x, beta, tau_value, sigma1_sq, sigma2_sq) +
+          log_prior_tau(tau_value, tau_prior_mean, tau_prior_sd, tau_min, tau_max)
+      },
+      numeric(1)
+    )
+    
+    # Combine likelihood with the discretised truncated Normal prior over tau.
+    log_probs_tau <- log_probs_tau - max(log_probs_tau)
+    probs_tau <- exp(log_probs_tau)
+    probs_tau <- probs_tau / sum(probs_tau)
+    tau <- sample(tau_candidates, size = 1, prob = probs_tau)
+    
+    current_lp <- log_posterior(
+      y, x, beta, tau, sigma1_sq, sigma2_sq,
+      mu0, sd0, a0, b0,
+      tau_prior_mean, tau_prior_sd, tau_min, tau_max
+    )
+    
+    if (iter %in% keep_index) {
+      samples[keep_counter, ] <- c(beta, tau, sigma1_sq, sigma2_sq)
+      keep_counter <- keep_counter + 1
+    }
+  }
+  
+  list(
+    samples = as.data.frame(samples),
+    accept_rate_beta = accept_beta / n_iter
+  )
+}
+
+mcmc_fit <- run_sampler(
+  y = y,
+  x = x,
+  tau_candidates = tau_candidates,
+  n_iter = 30000,
+  burn_in = 10000,
+  thin = 5,
+  beta_init = beta_init,
+  tau_init = tau_init,
+  sigma1_init = sigma1_init,
+  sigma2_init = sigma2_init,
+  mu0 = mu0,
+  sd0 = sd0,
+  a0 = a0,
+  b0 = b0,
+  tau_prior_mean = tau_prior_mean,
+  tau_prior_sd = tau_prior_sd,
+  tau_min = min(x),
+  tau_max = max(x),
+  proposal_sd = c(500, 500)
+)
+
+samples <- mcmc_fit$samples
+mcmc_fit$accept_rate_beta
+head(samples)
+```
+
+# Posterior summaries
+
+```{r posterior-summaries}
+posterior_summary <- function(z) {
+  c(
+    mean = mean(z),
+    sd = sd(z),
+    q2.5 = quantile(z, 0.025),
+    median = median(z),
+    q97.5 = quantile(z, 0.975)
+  )
+}
+
+summary_table <- rbind(
+  beta1 = posterior_summary(samples$beta1),
+  beta2 = posterior_summary(samples$beta2),
+  tau = posterior_summary(samples$tau),
+  sigma1_sq = posterior_summary(samples$sigma1_sq),
+  sigma2_sq = posterior_summary(samples$sigma2_sq),
+  sigma1 = posterior_summary(sqrt(samples$sigma1_sq)),
+  sigma2 = posterior_summary(sqrt(samples$sigma2_sq))
+)
+
+round(summary_table, 4)
+```
+
+The posterior median of \(\tau\) is used as the main estimate of the yield point. The posterior mode of \(\tau\) is also useful because \(\tau\) is sampled from a discrete grid.
+
+```{r tau-estimates}
+tau_mean <- mean(samples$tau)
+tau_median <- median(samples$tau)
+tau_mode <- as.numeric(names(which.max(table(round(samples$tau, 10)))))
+tau_ci <- quantile(samples$tau, c(0.025, 0.975))
+
+c(
+  tau_mean = tau_mean,
+  tau_median = tau_median,
+  tau_mode = tau_mode,
+  tau_lower_95 = tau_ci[1],
+  tau_upper_95 = tau_ci[2]
+)
+```
+
+# Evidence of larger variability after the changepoint
+
+```{r variance-comparison}
+prob_sigma2_greater_sigma1 <- mean(samples$sigma2_sq > samples$sigma1_sq)
+variance_ratio <- samples$sigma2_sq / samples$sigma1_sq
+sd_ratio <- sqrt(samples$sigma2_sq) / sqrt(samples$sigma1_sq)
+
+c(
+  Pr_sigma2_sq_greater_sigma1_sq = prob_sigma2_greater_sigma1,
+  mean_variance_ratio = mean(variance_ratio),
+  median_variance_ratio = median(variance_ratio),
+  mean_sd_ratio = mean(sd_ratio),
+  median_sd_ratio = median(sd_ratio)
+)
+```
+
+This directly addresses the observation that the variability after the changepoint appears greater than the variability before the changepoint. If \(\Pr(\sigma_2^2 > \sigma_1^2 \mid y)\) is close to 1, this provides strong posterior evidence that residual variability is larger after the yield point.
+
+# Diagnostic plots
+
+```{r trace-plots}
+par(mfrow = c(3, 2))
+plot(samples$beta1, type = "l", main = "Trace: beta1", xlab = "Saved iteration", ylab = "beta1")
+plot(samples$beta2, type = "l", main = "Trace: beta2", xlab = "Saved iteration", ylab = "beta2")
+plot(samples$tau, type = "l", main = "Trace: tau", xlab = "Saved iteration", ylab = "tau")
+plot(samples$sigma1_sq, type = "l", main = "Trace: sigma1_sq", xlab = "Saved iteration", ylab = "sigma1_sq")
+plot(samples$sigma2_sq, type = "l", main = "Trace: sigma2_sq", xlab = "Saved iteration", ylab = "sigma2_sq")
+par(mfrow = c(1, 1))
+```
+
+```{r posterior-density-plots}
+par(mfrow = c(2, 2))
+hist(samples$tau, breaks = 30, probability = TRUE, main = "Posterior distribution of tau", xlab = "tau")
+curve(
+  dnorm(x, mean = tau_prior_mean, sd = tau_prior_sd) /
+    (pnorm(max(tau_candidates), tau_prior_mean, tau_prior_sd) -
+       pnorm(min(tau_candidates), tau_prior_mean, tau_prior_sd)),
+  add = TRUE,
+  col = "red",
+  lwd = 2
+)
+hist(samples$sigma1_sq, breaks = 30, main = "Posterior sigma1_sq", xlab = "sigma1_sq")
+hist(samples$sigma2_sq, breaks = 30, main = "Posterior sigma2_sq", xlab = "sigma2_sq")
+hist(variance_ratio, breaks = 30, main = "Posterior variance ratio", xlab = "sigma2_sq / sigma1_sq")
+par(mfrow = c(1, 1))
+```
+
+# Posterior mean fitted curve
+
+The fitted curve is computed by averaging the fitted mean function over posterior samples.
+
+```{r posterior-mean-curve}
+x_grid <- seq(min(x), max(x), length.out = 300)
+
+# To reduce computation, use all saved samples here. For very large MCMC output, use a random subset.
+posterior_mu_grid <- matrix(NA_real_, nrow = nrow(samples), ncol = length(x_grid))
+
+for (s in seq_len(nrow(samples))) {
+  beta_s <- c(samples$beta1[s], samples$beta2[s])
+  tau_s <- samples$tau[s]
+  X_grid_s <- make_design(x_grid, tau_s)
+  posterior_mu_grid[s, ] <- as.vector(X_grid_s %*% beta_s)
+}
+
+fit_mean <- colMeans(posterior_mu_grid)
+fit_lower <- apply(posterior_mu_grid, 2, quantile, probs = 0.025)
+fit_upper <- apply(posterior_mu_grid, 2, quantile, probs = 0.975)
+
+plot(
+  x, y,
+  pch = 16,
+  col = "grey40",
+  xlab = "Strain",
+  ylab = "Stress",
+  main = "Bayesian heteroscedastic piecewise linear fit"
+)
+lines(x_grid, fit_mean, col = "blue", lwd = 2)
+lines(x_grid, fit_lower, col = "blue", lty = 3)
+lines(x_grid, fit_upper, col = "blue", lty = 3)
+abline(v = tau_median, col = "red", lwd = 2, lty = 2)
+legend(
+  "topleft",
+  legend = c("Posterior mean curve", "95% credible band for mean", "Estimated yield point"),
+  col = c("blue", "blue", "red"),
+  lty = c(1, 3, 2),
+  lwd = c(2, 1, 2),
+  bty = "n"
+)
+```
+
+# Results interpretation
+
+The estimated yield point is the posterior median of the breakpoint parameter \(\tau\). The posterior distribution of \(\tau\) combines the stress-strain data with the truncated Normal prior centred at 0.0045, and indicates where the change in slope is most likely to occur.
+
+The heteroscedastic model also provides posterior summaries for \(\sigma_1^2\) and \(\sigma_2^2\). These quantify the residual variability before and after the yield point. A large posterior probability that \(\sigma_2^2 > \sigma_1^2\) supports the visual impression that observations after the changepoint are more variable.
+
+
+
+# How the implementation would change for a much larger dataset
+
+The current implementation is suitable for a small dataset because it evaluates all candidate breakpoints when updating \(\tau\). If the dataset were much larger, or if the number of candidate breakpoints increased substantially, this direct approach would become computationally expensive.
+
+The main computational cost is that each MCMC iteration evaluates the likelihood over all candidate breakpoints. If there are \(n\) observations and \(K\) candidate breakpoints, the naive implementation can scale approximately as \(O(nK)\) per update of \(\tau\), which is not suitable for gigabyte-scale data.
+
+For a much larger dataset, I would consider the following changes.
+
+## 1. Reduce the breakpoint grid
+
+Instead of allowing every observed strain value to be a candidate breakpoint, I would use a smaller grid, such as quantiles of strain or a scientifically plausible interval around the expected yield point. This improves speed but may reduce precision if the grid is too coarse.
+
+## 2. Use sufficient statistics and cumulative sums
+
+For ordered data, many quantities needed for the likelihood can be updated using cumulative sums. This avoids repeatedly scanning the full dataset for every candidate \(\tau\). This is especially useful when the model is linear within each segment.
+
+## 3. Use MCMC proposals for tau rather than full enumeration
+
+Instead of evaluating all candidate breakpoints at each iteration, I could propose a local move for \(\tau\), for example moving to a nearby candidate breakpoint, and accept or reject it using a Metropolis-Hastings step. This reduces computation but may require careful tuning to ensure adequate mixing.
+
+## 4. Parallel computation
+
+The likelihood calculations across candidate breakpoints are naturally parallelisable. For medium-sized datasets, parallelising the breakpoint likelihood calculations may provide a simple speed improvement. However, for very large datasets, memory transfer and duplicated data across workers can become limiting.
+
+## 5. Use compiled or specialised tools
+
+For production-scale analysis, I would consider implementing the computationally intensive parts in C++ using Rcpp, or using probabilistic programming tools such as Stan, Nimble, or TMB. These tools can provide better performance and more reliable diagnostics.
+
+## 6. Consider approximate methods
+
+For gigabyte-scale data, exact Bayesian inference may be too slow. Possible approximations include binning the data, using stochastic subsampling, variational inference, or fitting the model to sufficient summaries. These approaches improve speed but introduce approximation error.
+
+# Main trade-offs
+
+The main trade-off is between exactness, computational efficiency, and implementation complexity.
+
+A full grid-based Bayesian approach is simple and transparent, and it gives a clear posterior distribution for the breakpoint. However, it becomes slow when the dataset or candidate breakpoint set is large.
+
+MCMC with local changepoint proposals is more scalable but requires careful tuning and convergence checking. Subsampling or binning is fast but can reduce accuracy. Sufficient-statistic approaches are efficient and accurate but require more careful implementation.
+
+For this dataset, the full discrete update for \(\tau\) is appropriate because it is simple, reproducible, and computationally feasible.
+
+# Optional Shiny app structure
+
+The following skeleton shows how a Shiny app could be built to allow users to vary prior settings and inspect how the fitted curve and estimated yield point change. This is included as optional code and is not evaluated when knitting the report.
+
+```{r shiny-app-skeleton, eval=FALSE}
+library(shiny)
+
+ui <- fluidPage(
+  titlePanel("Bayesian Aluminium Yield Point Explorer"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("prior_mean", "Prior mean for beta", 10000, 50000, 30000, step = 1000),
+      sliderInput("prior_sd", "Prior SD for beta", 5000, 50000, 20000, step = 1000),
+      numericInput("a0", "Inverse-gamma shape", value = 4, min = 0.1),
+      numericInput("b0", "Inverse-gamma rate", value = 13.12, min = 0.1),
+      numericInput("tau_prior_mean", "Prior mean for tau", value = 0.0045),
+      numericInput("tau_prior_sd", "Prior SD for tau", value = 0.003, min = 0.0001),
+      actionButton("run", "Run model")
+    ),
+    mainPanel(
+      plotOutput("fit_plot"),
+      tableOutput("summary_table")
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  
+  model_results <- eventReactive(input$run, {
+    run_sampler(
+      y = y,
+      x = x,
+      tau_candidates = tau_candidates,
+      n_iter = 10000,
+      burn_in = 3000,
+      thin = 5,
+      beta_init = beta_init,
+      tau_init = tau_init,
+      sigma1_init = sigma1_init,
+      sigma2_init = sigma2_init,
+      mu0 = c(input$prior_mean, input$prior_mean),
+      sd0 = c(input$prior_sd, input$prior_sd),
+      a0 = input$a0,
+      b0 = input$b0,
+      tau_prior_mean = input$tau_prior_mean,
+      tau_prior_sd = input$tau_prior_sd,
+      tau_min = min(x),
+      tau_max = max(x),
+      proposal_sd = c(500, 500)
+    )
+  })
+  
+  output$summary_table <- renderTable({
+    samples_app <- model_results()$samples
+    round(rbind(
+      tau = posterior_summary(samples_app$tau),
+      sigma1_sq = posterior_summary(samples_app$sigma1_sq),
+      sigma2_sq = posterior_summary(samples_app$sigma2_sq)
+    ), 4)
+  })
+  
+  output$fit_plot <- renderPlot({
+    samples_app <- model_results()$samples
+    tau_app <- median(samples_app$tau)
+    
+    plot(x, y, pch = 16, col = "grey40", xlab = "Strain", ylab = "Stress")
+    abline(v = tau_app, col = "red", lwd = 2, lty = 2)
+  })
+}
+
+shinyApp(ui, server)
+```
+

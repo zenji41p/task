@@ -1,0 +1,501 @@
+---
+title: "Bayesian One-Breakpoint Piecewise Linear Model for Aluminium Yield Point"
+author: "Jimmy Zeng"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 5
+)
+```
+
+# Aim
+
+The aim of this analysis is to estimate the yield point of an aluminium sample using a Bayesian one-breakpoint piecewise linear regression model. The data contain two variables:
+
+- `strain`: strain measurement, denoted by \(x_i\)
+- `stress`: stress measurement, denoted by \(y_i\)
+
+The fitted model is
+
+\[
+y_i \mid \beta_1, \beta_2, \tau, \sigma^2 \sim N(\mu_i, \sigma^2),
+\]
+
+where
+
+\[
+\mu_i =
+\begin{cases}
+\beta_1 x_i, & x_i \le \tau, \\
+\beta_1 \tau + \beta_2(x_i - \tau), & x_i > \tau.
+\end{cases}
+\]
+
+This parameterisation ensures that the two fitted line segments join continuously at the breakpoint \(\tau\), which is interpreted as the estimated yield point.
+
+# Load and inspect the data
+
+```{r load-data}
+# Load packages
+library(ggplot2)
+library(dplyr)
+# Set up working directory 
+setwd("/Users/jimmyzeng/Desktop/job application documents/task")
+# Read the data
+aluminium <- read.csv("aluminium.csv")
+
+# Inspect the first few rows
+head(aluminium)
+
+# Check variable names and structure
+str(aluminium)
+
+# Remove incomplete observations, if any
+aluminium <- aluminium %>%
+  filter(!is.na(strain), !is.na(stress)) %>%
+  arrange(strain)
+
+x <- aluminium$strain
+y <- aluminium$stress
+n <- length(y)
+
+summary(aluminium)
+```
+
+# Exploratory plot
+
+```{r exploratory-plot}
+ggplot(aluminium, aes(x = strain, y = stress)) +
+  geom_point(alpha = 0.7) +
+  labs(
+    title = "Observed aluminium stress-strain data",
+    x = "Strain",
+    y = "Stress"
+  ) +
+  theme_minimal()
+```
+
+# Bayesian model implementation
+
+For a fixed candidate breakpoint \(\tau\), the model can be written as a linear regression model with design matrix
+
+\[
+X_\tau =
+\begin{bmatrix}
+z_{1i} & z_{2i}
+\end{bmatrix},
+\]
+
+where
+
+\[
+z_{1i} = \min(x_i, \tau), \qquad z_{2i} = \max(0, x_i - \tau).
+\]
+
+The prior assumptions are
+
+\[
+\beta_j \mid \sigma^2, \tau \sim N(30000, 20000^2 \sigma^2), \qquad j = 1,2,
+\]
+
+\[
+\sigma^2 \mid \tau \sim \text{Inverse-Gamma}(4, 13.12),
+\]
+
+and a discrete uniform prior is placed on the set of candidate breakpoints.
+
+The posterior distribution of \(\tau\) is obtained by evaluating the marginal likelihood over all candidate breakpoints and normalising these values to sum to one.
+
+```{r model-fitting}
+# -----------------------------
+# Prior settings
+# -----------------------------
+mu0 <- c(30000, 30000)
+Sigma0 <- diag(20000^2, 2)
+Sigma0_inv <- solve(Sigma0)
+
+a0 <- 4
+b0 <- 13.12
+
+# -----------------------------
+# Candidate breakpoints
+# -----------------------------
+# Avoid the first and last few observations so that both line segments have data.
+min_points_each_side <- 5
+
+tau_candidates <- sort(unique(x))[min_points_each_side:(length(unique(x)) - min_points_each_side)]
+K <- length(tau_candidates)
+
+# Storage
+log_marginal <- numeric(K)
+posterior_beta_mean <- vector("list", K)
+posterior_sigma2_mean <- numeric(K)
+
+# -----------------------------
+# Loop over candidate breakpoints
+# -----------------------------
+for (k in seq_along(tau_candidates)) {
+  
+  tau <- tau_candidates[k]
+  
+  # Design matrix ensuring continuity at tau
+  X <- cbind(
+    pmin(x, tau),
+    pmax(0, x - tau)
+  )
+  
+  XtX <- crossprod(X)
+  XtY <- crossprod(X, y)
+  
+  Sigma_n <- solve(Sigma0_inv + XtX)
+  mu_n <- Sigma_n %*% (Sigma0_inv %*% mu0 + XtY)
+  
+  a_n <- a0 + n / 2
+  
+  b_n <- as.numeric(
+    b0 + 0.5 * (
+      crossprod(y) +
+        t(mu0) %*% Sigma0_inv %*% mu0 -
+        t(mu_n) %*% solve(Sigma_n) %*% mu_n
+    )
+  )
+  
+  # Log marginal likelihood under Normal-Inverse-Gamma conjugacy
+  log_marginal[k] <-
+    - n / 2 * log(pi) +
+    0.5 * (determinant(Sigma_n, logarithm = TRUE)$modulus -
+             determinant(Sigma0, logarithm = TRUE)$modulus) +
+    a0 * log(b0) -
+    a_n * log(b_n) +
+    lgamma(a_n) -
+    lgamma(a0)
+  
+  posterior_beta_mean[[k]] <- as.vector(mu_n)
+  posterior_sigma2_mean[k] <- b_n / (a_n - 1)
+}
+
+# -----------------------------
+# Posterior distribution of tau
+# -----------------------------
+# The prior on tau is uniform, so the posterior is proportional to the marginal likelihood.
+log_post_tau <- log_marginal - max(log_marginal)
+post_tau <- exp(log_post_tau)
+post_tau <- post_tau / sum(post_tau)
+
+# Posterior summaries for tau
+tau_hat <- tau_candidates[which.max(post_tau)]
+tau_mean <- sum(tau_candidates * post_tau)
+tau_sd <- sqrt(sum((tau_candidates - tau_mean)^2 * post_tau))
+
+tau_cdf <- cumsum(post_tau)
+tau_ci <- c(
+  lower = tau_candidates[which(tau_cdf >= 0.025)[1]],
+  upper = tau_candidates[which(tau_cdf >= 0.975)[1]]
+)
+
+# Posterior beta summaries at the MAP breakpoint
+map_index <- which.max(post_tau)
+beta_map_mean <- posterior_beta_mean[[map_index]]
+sigma2_map_mean <- posterior_sigma2_mean[map_index]
+
+posterior_summary <- data.frame(
+  Quantity = c(
+    "Posterior mode of tau / estimated yield point",
+    "Posterior mean of tau",
+    "Posterior SD of tau",
+    "Lower 95% credible limit for tau",
+    "Upper 95% credible limit for tau",
+    "Posterior mean beta_1 at MAP tau",
+    "Posterior mean beta_2 at MAP tau",
+    "Posterior mean sigma^2 at MAP tau"
+  ),
+  Estimate = c(
+    tau_hat,
+    tau_mean,
+    tau_sd,
+    tau_ci["lower"],
+    tau_ci["upper"],
+    beta_map_mean[1],
+    beta_map_mean[2],
+    sigma2_map_mean
+  )
+)
+
+posterior_summary
+```
+
+# Posterior distribution of the breakpoint
+
+```{r posterior-tau-plot}
+tau_df <- data.frame(
+  tau = tau_candidates,
+  posterior_probability = post_tau
+)
+
+ggplot(tau_df, aes(x = tau, y = posterior_probability)) +
+  geom_line(linewidth = 1) +
+  geom_vline(xintercept = tau_hat, linetype = "dashed", linewidth = 1) +
+  labs(
+    title = "Posterior distribution of the breakpoint",
+    subtitle = paste("Posterior mode of tau =", signif(tau_hat, 4)),
+    x = expression(tau),
+    y = "Posterior probability"
+  ) +
+  theme_minimal()
+```
+
+# Posterior mean fitted curve
+
+The posterior mean fitted curve is obtained by averaging the fitted mean curve over the posterior distribution of \(\tau\):
+
+\[
+E[\mu_i \mid y] \approx \sum_k P(\tau_k \mid y) E[\mu_i \mid \tau_k, y].
+\]
+
+```{r posterior-mean-curve}
+# Model-averaged posterior mean curve
+fitted_mean <- numeric(n)
+
+for (k in seq_along(tau_candidates)) {
+  
+  tau <- tau_candidates[k]
+  beta_k <- posterior_beta_mean[[k]]
+  
+  mu_k <- beta_k[1] * pmin(x, tau) + beta_k[2] * pmax(0, x - tau)
+  
+  fitted_mean <- fitted_mean + post_tau[k] * mu_k
+}
+
+plot_df <- aluminium %>%
+  mutate(fitted_posterior_mean = fitted_mean)
+
+ggplot(plot_df, aes(x = strain, y = stress)) +
+  geom_point(alpha = 0.65) +
+  geom_line(aes(y = fitted_posterior_mean), linewidth = 1) +
+  geom_vline(xintercept = tau_hat, linetype = "dashed", linewidth = 1) +
+  labs(
+    title = "Bayesian one-breakpoint piecewise linear fit",
+    subtitle = paste("Estimated yield point =", signif(tau_hat, 4)),
+    x = "Strain",
+    y = "Stress"
+  ) +
+  theme_minimal()
+```
+
+# Interpretation
+
+The estimated yield point is the posterior mode of the breakpoint \(\tau\), which is reported in the posterior summary table. The posterior distribution of \(\tau\) shows the degree of uncertainty around this estimate. A sharply peaked posterior would suggest strong evidence for a particular yield point, whereas a wider posterior would indicate greater uncertainty.
+
+The fitted posterior mean curve follows the observed stress-strain pattern while enforcing continuity at the estimated breakpoint. The first slope, \(\beta_1\), represents the initial elastic-region relationship between stress and strain. The second slope, \(\beta_2\), represents the relationship after the yield point.
+
+# Implementation approach and scalability discussion
+
+For this dataset, I used a grid-based Bayesian approach. I evaluated the marginal likelihood for every candidate breakpoint, then normalised these marginal likelihoods to obtain the posterior distribution over \(\tau\). This approach is attractive because it is simple, transparent, and gives an exact posterior over the discrete candidate set.
+
+However, the computational cost increases with both the number of observations and the number of candidate breakpoints. The basic implementation has computational complexity approximately proportional to
+
+\[
+O(nK),
+\]
+
+where \(n\) is the number of observations and \(K\) is the number of candidate breakpoints.
+
+If the dataset were much larger, for example several gigabytes, or if the number of candidate breakpoints increased substantially, I would consider the following changes.
+
+## Reducing the number of candidate breakpoints
+
+Rather than evaluating every observed strain value as a possible breakpoint, I could evaluate a smaller grid, such as quantiles of the strain variable. This would reduce computation substantially but may slightly reduce precision in the estimated yield point.
+
+## Using sufficient statistics
+
+For a piecewise linear Gaussian model, many repeated calculations can be accelerated using cumulative sums such as
+
+\[
+\sum x_i, \quad \sum y_i, \quad \sum x_i^2, \quad \sum x_i y_i, \quad \sum y_i^2.
+\]
+
+This avoids repeatedly scanning the full dataset for each breakpoint and can greatly improve efficiency.
+
+## Parallel computing
+
+The calculations for different candidate breakpoints are independent. Therefore, the loop over \(\tau\) can be parallelised across multiple CPU cores or compute nodes. This is easy to implement and preserves the exact grid-based posterior calculation, but it increases memory requirements.
+
+## MCMC or stochastic search
+
+If the candidate breakpoint set is extremely large, I would consider sampling \(\tau\) using Markov chain Monte Carlo rather than evaluating every possible candidate. This can reduce computation, but it introduces Monte Carlo error and requires convergence diagnostics.
+
+## Out-of-memory and database-backed computation
+
+For gigabyte-scale datasets, it may not be possible to load all data into memory. In that case, I would use tools such as `data.table`, `arrow`, or database-backed workflows to process the data in chunks. The main goal would be to compute the required sufficient statistics without repeatedly loading the full dataset.
+
+## Main trade-offs
+
+The key trade-off is between computational speed, statistical precision, and implementation complexity. The full grid-based approach is exact over the candidate set and easy to explain, but it may not scale well. Approximate methods such as coarser grids, subsampling, or MCMC are faster, but they require careful checking to ensure that the estimated yield point remains reliable.
+
+# Optional Shiny app
+
+The following code provides a simple Shiny app structure for exploring how the fitted curve and estimated yield point change under different prior settings. It is included as an optional extension and is not run automatically when knitting this report.
+
+```{r shiny-app, eval=FALSE}
+library(shiny)
+library(ggplot2)
+library(dplyr)
+
+fit_breakpoint_model <- function(data, prior_mean = 30000, prior_sd = 20000,
+                                 a0 = 4, b0 = 13.12,
+                                 min_points_each_side = 5) {
+  
+  data <- data %>%
+    filter(!is.na(strain), !is.na(stress)) %>%
+    arrange(strain)
+  
+  x <- data$strain
+  y <- data$stress
+  n <- length(y)
+  
+  tau_candidates <- sort(unique(x))[min_points_each_side:(length(unique(x)) - min_points_each_side)]
+  K <- length(tau_candidates)
+  
+  mu0 <- c(prior_mean, prior_mean)
+  Sigma0 <- diag(prior_sd^2, 2)
+  Sigma0_inv <- solve(Sigma0)
+  
+  log_marginal <- numeric(K)
+  posterior_beta_mean <- vector("list", K)
+  
+  for (k in seq_along(tau_candidates)) {
+    tau <- tau_candidates[k]
+    X <- cbind(pmin(x, tau), pmax(0, x - tau))
+    
+    XtX <- crossprod(X)
+    XtY <- crossprod(X, y)
+    
+    Sigma_n <- solve(Sigma0_inv + XtX)
+    mu_n <- Sigma_n %*% (Sigma0_inv %*% mu0 + XtY)
+    a_n <- a0 + n / 2
+    
+    b_n <- as.numeric(
+      b0 + 0.5 * (
+        crossprod(y) +
+          t(mu0) %*% Sigma0_inv %*% mu0 -
+          t(mu_n) %*% solve(Sigma_n) %*% mu_n
+      )
+    )
+    
+    log_marginal[k] <-
+      - n / 2 * log(pi) +
+      0.5 * (determinant(Sigma_n, logarithm = TRUE)$modulus -
+               determinant(Sigma0, logarithm = TRUE)$modulus) +
+      a0 * log(b0) -
+      a_n * log(b_n) +
+      lgamma(a_n) -
+      lgamma(a0)
+    
+    posterior_beta_mean[[k]] <- as.vector(mu_n)
+  }
+  
+  post_tau <- exp(log_marginal - max(log_marginal))
+  post_tau <- post_tau / sum(post_tau)
+  tau_hat <- tau_candidates[which.max(post_tau)]
+  
+  fitted_mean <- numeric(n)
+  for (k in seq_along(tau_candidates)) {
+    tau <- tau_candidates[k]
+    beta_k <- posterior_beta_mean[[k]]
+    mu_k <- beta_k[1] * pmin(x, tau) + beta_k[2] * pmax(0, x - tau)
+    fitted_mean <- fitted_mean + post_tau[k] * mu_k
+  }
+  
+  list(
+    data = data %>% mutate(fitted_mean = fitted_mean),
+    tau_candidates = tau_candidates,
+    post_tau = post_tau,
+    tau_hat = tau_hat,
+    tau_mean = sum(tau_candidates * post_tau)
+  )
+}
+
+ui <- fluidPage(
+  titlePanel("Bayesian aluminium yield point model"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("prior_mean", "Prior mean for beta", min = 10000, max = 60000,
+                  value = 30000, step = 1000),
+      sliderInput("prior_sd", "Prior SD for beta", min = 1000, max = 50000,
+                  value = 20000, step = 1000),
+      numericInput("a0", "Inverse-Gamma shape", value = 4, min = 0.1),
+      numericInput("b0", "Inverse-Gamma scale", value = 13.12, min = 0.1)
+    ),
+    mainPanel(
+      verbatimTextOutput("summary"),
+      plotOutput("fit_plot"),
+      plotOutput("tau_plot")
+    )
+  )
+)
+
+server <- function(input, output) {
+  
+  fit <- reactive({
+    fit_breakpoint_model(
+      aluminium,
+      prior_mean = input$prior_mean,
+      prior_sd = input$prior_sd,
+      a0 = input$a0,
+      b0 = input$b0
+    )
+  })
+  
+  output$summary <- renderPrint({
+    cat("Estimated yield point:", fit()$tau_hat, "\n")
+    cat("Posterior mean of tau:", fit()$tau_mean, "\n")
+  })
+  
+  output$fit_plot <- renderPlot({
+    ggplot(fit()$data, aes(x = strain, y = stress)) +
+      geom_point(alpha = 0.65) +
+      geom_line(aes(y = fitted_mean), linewidth = 1) +
+      geom_vline(xintercept = fit()$tau_hat, linetype = "dashed", linewidth = 1) +
+      labs(
+        title = "Posterior mean fitted curve",
+        x = "Strain",
+        y = "Stress"
+      ) +
+      theme_minimal()
+  })
+  
+  output$tau_plot <- renderPlot({
+    tau_df <- data.frame(
+      tau = fit()$tau_candidates,
+      posterior_probability = fit()$post_tau
+    )
+    
+    ggplot(tau_df, aes(x = tau, y = posterior_probability)) +
+      geom_line(linewidth = 1) +
+      geom_vline(xintercept = fit()$tau_hat, linetype = "dashed", linewidth = 1) +
+      labs(
+        title = "Posterior distribution of tau",
+        x = expression(tau),
+        y = "Posterior probability"
+      ) +
+      theme_minimal()
+  })
+}
+
+shinyApp(ui, server)
+```
+
+# Conclusion
+
+This analysis fitted a Bayesian one-breakpoint piecewise linear model to the aluminium stress-strain data. The yield point was estimated using the posterior distribution of the breakpoint \(\tau\). The final fitted posterior mean curve provides a continuous segmented regression fit to the data, and the posterior distribution of \(\tau\) quantifies uncertainty in the estimated yield point.
